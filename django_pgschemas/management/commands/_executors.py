@@ -1,5 +1,6 @@
 import functools
 import multiprocessing
+from concurrent.futures import ThreadPoolExecutor
 
 from django.conf import settings
 from django.core.management import call_command
@@ -10,6 +11,14 @@ from django_pgschemas.routing.info import DomainInfo
 from django_pgschemas.schema import Schema, activate
 from django_pgschemas.utils import get_clone_reference, get_tenant_model
 
+HAS_TQDM = False
+
+try:
+    from tqdm import tqdm
+
+    HAS_TQDM = True
+except ImportError:
+    pass
 
 def run_on_schema(
     schema_name,
@@ -107,14 +116,26 @@ def sequential(
         pass_schema_in_kwargs=pass_schema_in_kwargs,
         fork_db=False,
     )
-    for schema in schemas:
-        runner(schema)
+    if HAS_TQDM:
+        for schema in tqdm(schemas, desc="Migrating schemas"):
+            runner(schema)
+    else:
+        for schema in schemas:
+            runner(schema)
     return schemas
 
 
+def init_configurations():
+    """Initialize django-configurations"""
+    try:
+        from configurations import setup
+        setup()
+    except ImportError:
+        pass
+
 def parallel(schemas, command, function_name, args=None, kwargs=None, pass_schema_in_kwargs=False):
     processes = getattr(settings, "PGSCHEMAS_PARALLEL_MAX_PROCESSES", None)
-    pool = multiprocessing.Pool(processes=processes)
+    pool = multiprocessing.Pool(processes=processes, initializer=init_configurations)
     runner = functools.partial(
         run_on_schema,
         executor_codename="parallel",
@@ -125,4 +146,7 @@ def parallel(schemas, command, function_name, args=None, kwargs=None, pass_schem
         pass_schema_in_kwargs=pass_schema_in_kwargs,
         fork_db=True,
     )
+
+    if HAS_TQDM:
+        return list(tqdm(pool.imap(runner, schemas), desc="Migrating schemas", total=len(schemas)))
     return pool.map(runner, schemas)
