@@ -112,3 +112,5 @@ venv.bak/
 # local only by design
 setup.py
 .postgres/
+
+.idea/
